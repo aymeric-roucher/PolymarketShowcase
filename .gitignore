@@ -1,0 +1,50 @@
+# --- General OS/editor noise ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+# VS Code and JetBrains project files stay local
+.vscode/
+.idea/
+
+# --- Python backend artifacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+coverage/
+htmlcov/
+dist/
+build/
+*.egg-info/
+pip-wheel-metadata/
+env/
+venv/
+.venv/
+.env
+.env.*
+
+# --- Node/Vite frontend artifacts ---
+node_modules/
+**/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.eslintcache
+dist-ssr/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Tool-specific ---
+.DS_Store?
+.cache/
+*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
