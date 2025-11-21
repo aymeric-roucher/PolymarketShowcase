@@ -159,7 +159,7 @@ export function PolymarketPage() {
               If it keeps beating the market, it means we can predict the future more accurately than the crowd, the experts,
               and the insider info.
             </p>
-            <p className="text-white/80 text-base">Today&apos;s gains stem from an initial $100 bankroll. See the results.</p>
+            <p className="text-white/80 text-lg">Today&apos;s gains stem from an initial $100 bankroll. See the results.</p>
             <div className="flex flex-wrap gap-4">
               <a
                 href={portfolioUrl}

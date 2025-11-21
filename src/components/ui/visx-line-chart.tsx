@@ -175,8 +175,20 @@ export function VisxLineChart({
       }
     }
 
+    // Add padding so the line never hugs the top/bottom bounds
+    const span = yExtent[1] - yExtent[0]
+    const padding = span === 0 ? Math.max(Math.abs(yExtent[0]), 1) * 0.05 : span * 0.05
+    yExtent = [yExtent[0] - padding, yExtent[1] + padding]
+
+    // Pad x domain very slightly so the last dot isn't clipped
+    const xPaddingMs = (xExtent[1].getTime() - xExtent[0].getTime()) * 0.01 || 24 * 60 * 60 * 1000
+    const paddedXDomain: [Date, Date] = [
+      new Date(xExtent[0].getTime() - xPaddingMs),
+      new Date(xExtent[1].getTime() + xPaddingMs)
+    ]
+
     const xScale = scaleTime({
-      domain: xExtent,
+      domain: paddedXDomain,
       range: [margin.left, containerWidth - margin.right]
     })
 
