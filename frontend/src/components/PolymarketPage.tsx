@@ -1,22 +1,23 @@
 import { AlertTriangle, ExternalLink, LineChart, Loader2, RefreshCcw, ShieldCheck, Sparkles, Wallet2 } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import type { PolymarketClosedPosition, PolymarketPosition, PolymarketWalletSnapshot } from '../api'
-import { apiService } from '../api'
+import { DEFAULT_HORIZONS, DEFAULT_POLYMARKET_USER, fetchWalletSnapshot } from '../api'
 import { cn } from '../lib/utils'
 import { VisxLineChart } from './ui/visx-line-chart'
-
-const DEFAULT_POLYMARKET_USER = '0x006BCFa7486Cbe8f85b516Ff559a65E667a4B411'
-const CHART_BASELINE = 110 // arbitrary denominator to express returns in %
-
-const HORIZON_OPTIONS = [
-  { label: '1D', value: 1 },
-  { label: '1W', value: 7 },
-  { label: '1M', value: 30 }
-]
 
 const frostPanel = 'bg-white/5 backdrop-blur-2xl border border-white/10 shadow-[0_20px_60px_rgba(15,23,42,0.35)]'
 
 const polymarketBaseUrl = 'https://polymarket.com'
+const DIRECT_PNL_API = 'https://user-pnl-api.polymarket.com/user-pnl'
+const DIRECT_PNL_INTERVAL = '1m'
+const DIRECT_PNL_FIDELITY = '1d'
+const PNL_VIEW_OPTIONS = [
+  { label: '1W', days: 7 },
+  { label: '1M', days: 30 },
+  { label: 'ALL', days: null }
+]
+
+type DirectPnlPoint = { t: number; p: number }
 
 export function PolymarketPage() {
   const queryParams = useMemo(() => new URLSearchParams(window.location.search), [])
@@ -28,15 +29,18 @@ export function PolymarketPage() {
   const [wallet, setWallet] = useState<PolymarketWalletSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [horizonIndex, setHorizonIndex] = useState(2)
+  const [pnlHistory, setPnlHistory] = useState<DirectPnlPoint[] | null>(null)
+  const [pnlLoading, setPnlLoading] = useState(false)
+  const [pnlError, setPnlError] = useState<string | null>(null)
+  const [pnlViewIndex, setPnlViewIndex] = useState(PNL_VIEW_OPTIONS.length - 1)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    apiService.getWallet({
+    fetchWalletSnapshot({
       user: walletAddress,
-      horizons: HORIZON_OPTIONS.map(option => option.value)
+      horizons: Array.from(DEFAULT_HORIZONS)
     })
       .then(data => {
         if (cancelled) return
@@ -52,34 +56,62 @@ export function PolymarketPage() {
     return () => { cancelled = true }
   }, [walletAddress])
 
-  const selectedHorizon = HORIZON_OPTIONS[horizonIndex] ?? HORIZON_OPTIONS[HORIZON_OPTIONS.length - 1]
-  const selectedHistoryKey = selectedHorizon ? String(selectedHorizon.value) : String(HORIZON_OPTIONS[0].value)
-  const chartHistory = wallet?.history?.[selectedHistoryKey] ?? []
-  const sortedHistory = useMemo(() => {
-    if (!chartHistory.length) return []
-    return [...chartHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-  }, [chartHistory])
-  const normalizedHistory = useMemo(() => {
-    if (!sortedHistory.length) return []
-    return sortedHistory.map(point => ({
-      date: point.date,
-      value: (point.value - CHART_BASELINE) / CHART_BASELINE
-    }))
-  }, [sortedHistory])
-  const chartSeries = useMemo(() => (
-    normalizedHistory.length
-      ? [{ dataKey: 'portfolio', data: normalizedHistory, stroke: '#7dd3fc', name: 'Portfolio Value' }]
-      : []
-  ), [normalizedHistory])
+  useEffect(() => {
+    let cancelled = false
+    setPnlLoading(true)
+    setPnlError(null)
+    setPnlHistory(null)
+    const params = new URLSearchParams({
+      user_address: walletAddress,
+      interval: DIRECT_PNL_INTERVAL,
+      fidelity: DIRECT_PNL_FIDELITY
+    })
+    fetch(`${DIRECT_PNL_API}?${params.toString()}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Direct PnL API failed (${response.status})`)
+        }
+        return await response.json()
+      })
+      .then((data: unknown) => {
+        if (cancelled) return
+        setPnlHistory(Array.isArray(data) ? data as DirectPnlPoint[] : [])
+        setPnlLoading(false)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : 'Unable to load direct PnL history'
+        setPnlError(message)
+        setPnlLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [walletAddress])
 
-  const chartDelta = useMemo(() => {
-    if (!sortedHistory.length) return { absolute: 0, percent: 0 }
-    const firstValue = sortedHistory[0].value
-    const lastValue = sortedHistory[sortedHistory.length - 1].value
-    const absolute = lastValue - firstValue
-    const percent = ((lastValue - firstValue) / CHART_BASELINE) * 100
-    return { absolute, percent }
-  }, [sortedHistory])
+  const selectedPnlView = PNL_VIEW_OPTIONS[pnlViewIndex] ?? PNL_VIEW_OPTIONS[PNL_VIEW_OPTIONS.length - 1]
+
+  const directPnlSeries = useMemo(() => {
+    if (!pnlHistory?.length) return []
+    const sortedPoints = [...pnlHistory]
+      .sort((a, b) => a.t - b.t)
+      .map((point) => ({
+        date: new Date(point.t * 1000).toISOString(),
+        value: point.p
+      }))
+    let filteredPoints = sortedPoints
+    if (selectedPnlView.days != null) {
+      const cutoff = Date.now() - selectedPnlView.days * 24 * 60 * 60 * 1000
+      filteredPoints = sortedPoints.filter((point) => new Date(point.date).getTime() >= cutoff)
+      if (filteredPoints.length === 0) {
+        filteredPoints = sortedPoints.slice(-1)
+      }
+    }
+    return [{
+      dataKey: 'directPnl',
+      data: filteredPoints,
+      stroke: '#fbbf24',
+      name: 'Net PnL'
+    }]
+  }, [pnlHistory, selectedPnlView])
 
   const stats = wallet?.stats
   const rawOpenPositions = wallet?.open_positions ?? []
@@ -91,6 +123,9 @@ export function PolymarketPage() {
     })
   }, [rawOpenPositions])
   const closedPositions = wallet?.closed_positions ?? []
+  const sortedClosedPositions = useMemo(() => {
+    return [...closedPositions].sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
+  }, [closedPositions])
 
   const portfolioUrl = `${polymarketBaseUrl}/@aubanel`
 
@@ -129,6 +164,12 @@ export function PolymarketPage() {
             >
               View on Polymarket <ExternalLink className="h-4 w-4" />
             </a>
+            <a
+              href="#direct-pnl"
+              className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-2 text-sm font-medium text-white/90 transition hover:bg-white/10"
+            >
+              View Net PnL
+            </a>
           </div>
         </div>
         <div className="w-full max-w-md">
@@ -136,8 +177,9 @@ export function PolymarketPage() {
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-white/60">Portfolio Value</p>
               <div className="text-3xl font-semibold text-white mt-1">{formatCurrency(stats?.total_open_value)}</div>
-              <div className={cn('text-sm mt-1 flex items-center gap-2', chartDelta.absolute >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
-                <TrendingBadge delta={chartDelta} horizonLabel={selectedHorizon.label} />
+              <div className={cn('text-sm mt-1 flex items-center gap-2', (stats?.total_unrealized_pnl ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
+                {(stats?.total_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{formatCurrency(stats?.total_unrealized_pnl ?? 0)}
+                <span className="text-white/60 text-[11px] uppercase tracking-[0.3em]">Unrealized PnL</span>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -177,55 +219,59 @@ export function PolymarketPage() {
 
         {renderHero()}
 
-        <section className={cn('rounded-3xl p-6 lg:p-8 space-y-6', frostPanel)}>
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
+        <section id="direct-pnl" className={cn('rounded-3xl p-6 lg:p-8 space-y-6', frostPanel)}>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-2xl font-semibold flex items-center gap-2">
-                <LineChart className="h-6 w-6 text-sky-300" /> Value Curve
+                <LineChart className="h-6 w-6 text-amber-300" /> Net PnL
               </h2>
-              <p className="text-white/70 text-sm">Reconstructed using on-chain fills and price histories.</p>
             </div>
-            <div className="flex flex-col gap-2 w-full md:w-64">
-              <input
-                type="range"
-                min={0}
-                max={HORIZON_OPTIONS.length - 1}
-                value={horizonIndex}
-                onChange={(event) => setHorizonIndex(Number(event.target.value))}
-                className="accent-sky-400"
-              />
-              <div className="flex justify-between text-[11px] uppercase tracking-[0.3em] text-white/60">
-                {HORIZON_OPTIONS.map((option, idx) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={cn('transition', idx === horizonIndex ? 'text-white' : 'text-white/50')}
-                    onClick={() => setHorizonIndex(idx)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs uppercase tracking-[0.3em] text-white/60">Range</span>
+              <div className="inline-flex rounded-full border border-white/10 bg-white/5 p-1">
+                {PNL_VIEW_OPTIONS.map((option, idx) => {
+                  const active = idx === pnlViewIndex
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      onClick={() => setPnlViewIndex(idx)}
+                      className={cn(
+                        'px-4 py-1 text-sm font-medium rounded-full transition',
+                        active ? 'bg-white text-slate-900 shadow' : 'text-white/70 hover:text-white'
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           </div>
 
-          <div className="h-[420px]">
-            {loading && !wallet ? (
+          <div className="h-[360px]">
+            {pnlLoading ? (
               <div className="h-full flex items-center justify-center text-white/70">
                 <Loader2 className="h-6 w-6 animate-spin" />
               </div>
-            ) : chartSeries.length ? (
+            ) : pnlError ? (
+              <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-100">
+                {pnlError}
+              </div>
+            ) : directPnlSeries.length ? (
               <VisxLineChart
-                height={380}
-                series={chartSeries}
+                height={320}
+                series={directPnlSeries}
                 showGrid
                 numTicks={5}
-                formatTooltipX={(value) => value.toLocaleString()}
+                formatTooltipX={(value) => value.toLocaleDateString()}
+                yTickFormat={(value) => formatCurrency(value)}
+                tooltipValueFormatter={(value) => formatCurrency(value)}
               />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center text-white/60">
                 <LineChart className="h-10 w-10 mb-2" />
-                <p>No activity in this horizon window.</p>
+                <p>No direct PnL data returned for this address.</p>
               </div>
             )}
           </div>
@@ -253,13 +299,13 @@ export function PolymarketPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Closed Positions</h3>
-              <span className="text-sm text-white/60">{closedPositions.length} entries</span>
+              <span className="text-sm text-white/60">{sortedClosedPositions.length} entries</span>
             </div>
             {loading && !wallet ? (
               <SkeletonRows rows={2} />
-            ) : closedPositions.length ? (
+            ) : sortedClosedPositions.length ? (
               <div className="space-y-4">
-                {closedPositions.map((position) => (
+                {sortedClosedPositions.map((position) => (
                   <ClosedPositionCard key={`${position.asset}-${position.timestamp}`} position={position} />
                 ))}
               </div>
@@ -282,20 +328,9 @@ function StatHighlight({ label, value, positive = true }: { label: string; value
   )
 }
 
-function TrendingBadge({ delta, horizonLabel }: { delta: { absolute: number; percent: number }; horizonLabel: string }) {
-  const positive = delta.absolute >= 0
-  return (
-    <span className="inline-flex items-center gap-2 text-sm">
-      {positive ? <Sparkles className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-      {positive ? '+' : ''}{formatCurrency(delta.absolute)} ({formatPercent(delta.percent)}) in {horizonLabel}
-    </span>
-  )
-}
-
 function PositionCard({ position }: { position: PolymarketPosition }) {
   const priceUrl = position.slug && position.eventSlug ? `${polymarketBaseUrl}/${position.eventSlug}/${position.slug}` : undefined
   const pnl = position.cashPnl ?? 0
-  const pnlPercent = position.percentPnl ?? position.percentRealizedPnl
   return (
     <article className={cn('rounded-3xl p-6 text-white space-y-5 transition hover:-translate-y-0.5', frostPanel)}>
       <div className="flex items-start gap-4">
@@ -334,7 +369,7 @@ function PositionCard({ position }: { position: PolymarketPosition }) {
       <div className="flex items-center justify-between text-sm font-medium">
         <span className="text-white/70">Cash PnL</span>
         <span className={cn('text-lg font-semibold', pnl >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
-          {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)} {pnlPercent != null && `(${formatPercent(pnlPercent)})`}
+          {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)}
         </span>
       </div>
     </article>
@@ -342,24 +377,40 @@ function PositionCard({ position }: { position: PolymarketPosition }) {
 }
 
 function ClosedPositionCard({ position }: { position: PolymarketClosedPosition }) {
-  const resolvedAt = position.timestamp ? formatRelative(position.timestamp * 1000) : 'Recently'
+  const resolvedAt = position.timestamp ? formatRelative(position.timestamp * 1000, { hoursToDaySwitch: 48 }) : 'Recently'
   const pnl = position.realizedPnl ?? 0
   const badgeColor = pnl >= 0 ? 'text-emerald-300' : 'text-rose-300'
+  const tradeSummaryParts: string[] = []
+  if (position.totalBought) {
+    tradeSummaryParts.push(`${formatNumber(position.totalBought)} ${position.outcome ?? 'shares'}`)
+  } else if (position.outcome) {
+    tradeSummaryParts.push(position.outcome)
+  }
+  tradeSummaryParts.push(`at ${formatCents(position.avgPrice)}`)
+  const tradeSummary = tradeSummaryParts.filter(Boolean).join(' ')
   return (
-    <article className={cn('rounded-3xl p-5 space-y-3', frostPanel)}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-semibold text-white">{position.title ?? 'Closed market'}</p>
-          <p className="text-sm text-white/60">{position.outcome ?? 'Outcome'} — {resolvedAt}</p>
+    <article className={cn('rounded-3xl p-5', frostPanel)}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-4 flex-1">
+          {position.icon ? (
+            <img src={position.icon} alt="" className="h-14 w-14 rounded-2xl border border-white/20 object-cover" />
+          ) : (
+            <div className="h-14 w-14 rounded-2xl bg-slate-900/60 flex items-center justify-center text-lg font-semibold">
+              {(position.outcome || position.title || '?').slice(0, 2).toUpperCase()}
+            </div>
+          )}
+          <div>
+            <p className="font-semibold text-white">{position.title ?? 'Closed market'}</p>
+            <p className="text-sm text-white/60">{tradeSummary}</p>
+          </div>
         </div>
-        <div className={cn('text-lg font-semibold', badgeColor)}>
-          {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)}
+        <div className="text-right">
+          <div className={cn('text-lg font-semibold', badgeColor)}>
+            {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)}
+          </div>
+          <p className="text-xs text-white/60">{resolvedAt}</p>
         </div>
       </div>
-      <dl className="grid grid-cols-2 gap-4 text-sm text-white/80">
-        <StatItem label="Avg Price" value={formatPercent((position.avgPrice ?? 0) * 100)} />
-        <StatItem label="Total Bought" value={`${formatNumber(position.totalBought)} shares`} />
-      </dl>
     </article>
   )
 }
@@ -417,7 +468,14 @@ function formatPercent(value: number | undefined | null): string {
 function formatNumber(value: number | undefined | null): string {
   if (!value) return '0'
   if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(1)}k`
-  return value.toFixed(2)
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
+function formatCents(price: number | undefined | null): string {
+  if (price === null || price === undefined || Number.isNaN(Number(price))) return '—'
+  const cents = Number(price) * 100
+  const precision = Math.abs(cents % 1) < 1e-9 ? 0 : 2
+  return `${cents.toFixed(precision)}¢`
 }
 
 function shortenAddress(address: string): string {
@@ -425,13 +483,17 @@ function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`
 }
 
-function formatRelative(dateLike: string | number): string {
+function formatRelative(dateLike: string | number, options?: { hoursToDaySwitch?: number }): string {
   const date = typeof dateLike === 'number' ? new Date(dateLike) : new Date(dateLike)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+  const diffMs = Date.now() - date.getTime()
+  const diffSeconds = Math.floor(diffMs / 1000)
+  if (diffSeconds < 60) return 'just now'
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`
+  const diffHours = Math.floor(diffMinutes / 60)
+  const hourThreshold = options?.hoursToDaySwitch ?? 24
+  if (diffHours < hourThreshold) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
 }

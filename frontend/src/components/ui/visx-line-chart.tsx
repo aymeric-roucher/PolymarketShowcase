@@ -31,6 +31,8 @@ interface VisxLineChartProps {
   yDomain?: [number, number]
   xDomain?: [Date, Date]
   formatTooltipX?: (value: Date) => string
+  tooltipValueFormatter?: (value: number) => string
+  yTickFormat?: (value: number) => string
   showGrid?: boolean
   numTicks?: number
   /** Optional: Custom annotations indexed by date string (YYYY-MM-DD) */
@@ -83,6 +85,8 @@ export function VisxLineChart({
   yDomain,
   xDomain,
   formatTooltipX = (value: Date) => format(value, 'MMM d, yyyy'),
+  tooltipValueFormatter,
+  yTickFormat,
   showGrid = true,
   numTicks = 4,
   additionalAnnotations = {}
@@ -311,7 +315,7 @@ export function VisxLineChart({
         let hasSeenZero = false
         newTooltips.forEach((t) => {
           const val = safeYAccessor(t.datum)
-          const isDisplayZero = val.toFixed(2) === '0.00'
+          const isDisplayZero = Math.abs(val) < 1e-9
           if (isDisplayZero) {
             if (!hasSeenZero) {
               filtered.push(t)
@@ -426,6 +430,7 @@ export function VisxLineChart({
           tickFormat={(val: any) => {
             const v = typeof val === 'number' ? val : Number(val)
             if (!Number.isFinite(v)) return ''
+            if (yTickFormat) return yTickFormat(v)
             return `${Math.round(v * 100)}%`
           }}
           tickLabelProps={() => ({
@@ -618,7 +623,11 @@ export function VisxLineChart({
                       boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                     }}
                   >
-                    <strong>{(safeYAccessor(tooltip.datum) * 100).toFixed(1)}%</strong> - {(tooltip.lineConfig.name || tooltip.lineConfig.dataKey).substring(0, 50)}
+                    <strong>
+                      {tooltipValueFormatter
+                        ? tooltipValueFormatter(safeYAccessor(tooltip.datum))
+                        : `${(safeYAccessor(tooltip.datum) * 100).toFixed(1)}%`}
+                    </strong> - {(tooltip.lineConfig.name || tooltip.lineConfig.dataKey).substring(0, 50)}
                   </div>
                 </div>
               ))
