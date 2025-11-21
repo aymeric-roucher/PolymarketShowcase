@@ -117,6 +117,7 @@ export function PolymarketPage() {
     }]
   }, [sortedPnlPoints, selectedPnlView])
 
+  const latestDirectPnl = sortedPnlPoints.length ? sortedPnlPoints[sortedPnlPoints.length - 1].p : null
   const stats = wallet?.stats
   const rawOpenPositions = wallet?.open_positions ?? []
   const openPositions = useMemo(() => {
@@ -132,7 +133,7 @@ export function PolymarketPage() {
   }, [closedPositions])
 
   const portfolioUrl = `${polymarketBaseUrl}/@aubanel`
-  const netPnl = (stats?.total_unrealized_pnl ?? 0) + (stats?.total_realized_pnl ?? 0)
+  const netPnl = latestDirectPnl ?? (stats?.total_unrealized_pnl ?? 0) + (stats?.total_realized_pnl ?? 0)
   const returnPercent = INITIAL_CAPITAL ? (netPnl / INITIAL_CAPITAL) * 100 : 0
 
   const renderHero = () => (
