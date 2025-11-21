@@ -1,11 +1,11 @@
-import { AlertTriangle, ExternalLink, LineChart, Loader2, RefreshCcw, ShieldCheck, Sparkles, Wallet2 } from 'lucide-react'
+import { AlertTriangle, ExternalLink, LineChart, Loader2, RefreshCcw, Sparkles } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import type { PolymarketClosedPosition, PolymarketPosition, PolymarketWalletSnapshot } from '../api'
 import { DEFAULT_HORIZONS, DEFAULT_POLYMARKET_USER, fetchWalletSnapshot } from '../api'
 import { cn } from '../lib/utils'
 import { VisxLineChart } from './ui/visx-line-chart'
 
-const frostPanel = 'bg-white/5 backdrop-blur-2xl border border-white/10 shadow-[0_20px_60px_rgba(15,23,42,0.35)]'
+const frostPanel = 'rounded-2xl bg-white/5 backdrop-blur-2xl border border-white/10 shadow-[0_16px_50px_rgba(15,23,42,0.35)]'
 
 const polymarketBaseUrl = 'https://polymarket.com'
 const DIRECT_PNL_API = 'https://user-pnl-api.polymarket.com/user-pnl'
@@ -16,6 +16,7 @@ const PNL_VIEW_OPTIONS = [
   { label: '1M', days: 30 },
   { label: 'ALL', days: null }
 ]
+const INITIAL_CAPITAL = 100
 
 type DirectPnlPoint = { t: number; p: number }
 
@@ -89,20 +90,23 @@ export function PolymarketPage() {
 
   const selectedPnlView = PNL_VIEW_OPTIONS[pnlViewIndex] ?? PNL_VIEW_OPTIONS[PNL_VIEW_OPTIONS.length - 1]
 
-  const directPnlSeries = useMemo(() => {
+  const sortedPnlPoints = useMemo(() => {
     if (!pnlHistory?.length) return []
-    const sortedPoints = [...pnlHistory]
-      .sort((a, b) => a.t - b.t)
-      .map((point) => ({
-        date: new Date(point.t * 1000).toISOString(),
-        value: point.p
-      }))
-    let filteredPoints = sortedPoints
+    return [...pnlHistory].sort((a, b) => a.t - b.t)
+  }, [pnlHistory])
+
+  const directPnlSeries = useMemo(() => {
+    if (!sortedPnlPoints.length) return []
+    const pointData = sortedPnlPoints.map((point) => ({
+      date: new Date(point.t * 1000).toISOString(),
+      value: point.p
+    }))
+    let filteredPoints = pointData
     if (selectedPnlView.days != null) {
       const cutoff = Date.now() - selectedPnlView.days * 24 * 60 * 60 * 1000
-      filteredPoints = sortedPoints.filter((point) => new Date(point.date).getTime() >= cutoff)
+      filteredPoints = pointData.filter((point) => new Date(point.date).getTime() >= cutoff)
       if (filteredPoints.length === 0) {
-        filteredPoints = sortedPoints.slice(-1)
+        filteredPoints = pointData.slice(-1)
       }
     }
     return [{
@@ -111,7 +115,7 @@ export function PolymarketPage() {
       stroke: '#fbbf24',
       name: 'Net PnL'
     }]
-  }, [pnlHistory, selectedPnlView])
+  }, [sortedPnlPoints, selectedPnlView])
 
   const stats = wallet?.stats
   const rawOpenPositions = wallet?.open_positions ?? []
@@ -119,7 +123,7 @@ export function PolymarketPage() {
     return rawOpenPositions.filter((position) => {
       const value = Number(position.currentValue ?? 0)
       const rounded = Math.round(value * 100) / 100
-      return Math.abs(rounded) >= 0.01
+      return Math.abs(rounded) >= 0.05
     })
   }, [rawOpenPositions])
   const closedPositions = wallet?.closed_positions ?? []
@@ -128,75 +132,61 @@ export function PolymarketPage() {
   }, [closedPositions])
 
   const portfolioUrl = `${polymarketBaseUrl}/@aubanel`
+  const netPnl = (stats?.total_unrealized_pnl ?? 0) + (stats?.total_realized_pnl ?? 0)
+  const returnPercent = INITIAL_CAPITAL ? (netPnl / INITIAL_CAPITAL) * 100 : 0
 
   const renderHero = () => (
     <section className={cn('relative overflow-hidden rounded-3xl p-8 md:p-12 text-white', frostPanel)}>
       <div className="absolute inset-0 bg-gradient-to-r from-sky-500/20 via-transparent to-indigo-500/10" aria-hidden="true"></div>
-      <div className="relative flex flex-col lg:flex-row gap-10">
-        <div className="flex-1 space-y-6">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1 text-xs uppercase tracking-[0.2em]">
-            <Sparkles className="h-4 w-4" /> Polymarket Wallet
-          </div>
-          <div>
-            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Deep dive into our Polymarket wallet</h1>
-            <p className="mt-3 text-white/80 max-w-2xl">
-              Live positions, realized gains, and reconstructed portfolio value for our flagship on-chain wallet.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <div className="flex items-center gap-3 rounded-full border border-white/15 bg-white/5 px-4 py-2">
-              <Wallet2 className="h-5 w-5 text-sky-300" />
-              <div className="font-mono text-base">{shortenAddress(walletAddress)}</div>
-            </div>
+      <div className="relative grid gap-10 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="space-y-6">
+          <div className="inline-flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-4 py-1 text-xs uppercase tracking-[0.2em] text-white/70">
+            <Sparkles className="h-4 w-4" />
+            Presage Labs Trader Agent
             {wallet?.fetched_at && (
-              <div className="flex items-center gap-2 text-white/70">
-                <RefreshCcw className="h-4 w-4" />
-                <span>Updated {formatRelative(wallet?.fetched_at)}</span>
-              </div>
+              <span className="inline-flex items-center gap-1 text-[11px] text-white/60">
+                <RefreshCcw className="h-3.5 w-3.5" />
+                Updated {formatRelative(wallet?.fetched_at)}
+              </span>
             )}
           </div>
-          <div className="flex flex-wrap gap-4">
-            <a
-              href={portfolioUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-full bg-white/20 px-5 py-2 text-sm font-medium text-white shadow-lg shadow-cyan-500/30 transition hover:bg-white/30"
-            >
-              View on Polymarket <ExternalLink className="h-4 w-4" />
-            </a>
-            <a
-              href="#direct-pnl"
-              className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-2 text-sm font-medium text-white/90 transition hover:bg-white/10"
-            >
-              View Net PnL
-            </a>
-          </div>
-        </div>
-        <div className="w-full max-w-md">
-          <div className={cn('rounded-2xl p-6 space-y-6 text-sm text-white/80', frostPanel)}>
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-white/60">Portfolio Value</p>
-              <div className="text-3xl font-semibold text-white mt-1">{formatCurrency(stats?.total_open_value)}</div>
-              <div className={cn('text-sm mt-1 flex items-center gap-2', (stats?.total_unrealized_pnl ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
-                {(stats?.total_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{formatCurrency(stats?.total_unrealized_pnl ?? 0)}
-                <span className="text-white/60 text-[11px] uppercase tracking-[0.3em]">Unrealized PnL</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <StatHighlight label="Unrealized PnL" value={formatCurrency(stats?.total_unrealized_pnl)} positive={(stats?.total_unrealized_pnl ?? 0) >= 0} />
-              <StatHighlight label="Realized PnL" value={formatCurrency(stats?.total_realized_pnl)} positive={(stats?.total_realized_pnl ?? 0) >= 0} />
-              <StatHighlight label="Open Positions" value={openPositions.length.toString()} />
-              <StatHighlight label="Closed Positions" value={closedPositions.length.toString()} />
-            </div>
-            <div className="flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3">
-              <ShieldCheck className="h-10 w-10 text-white" />
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-white/60">Address secured</p>
-                <p className="text-sm">Tracked through PrediBench on-chain wallet analytics.</p>
-              </div>
+          <div className="space-y-4 max-w-3xl">
+            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
+              We put a future-predicting agent in charge of our Polymarket trades.
+            </h1>
+            <p className="text-white/80 text-lg">
+              If it keeps beating the market, it means we can predict the future more accurately than the crowd, the experts,
+              and the insider info. Today&apos;s gains stem from an initial $100 bankroll.
+            </p>
+            <p className="text-white/80 text-base">See for yourself.</p>
+            <div className="flex flex-wrap gap-4">
+              <a
+                href={portfolioUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-full bg-white/20 px-5 py-2 text-sm font-medium text-white shadow-lg shadow-cyan-500/30 transition hover:bg-white/30"
+              >
+                View on Polymarket <ExternalLink className="h-4 w-4" />
+              </a>
+              <a
+                href="#direct-pnl"
+                className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-2 text-sm font-medium text-white/90 transition hover:bg-white/10"
+              >
+                See Net PnL
+              </a>
             </div>
           </div>
         </div>
+
+        <div className="space-y-4">
+          <HeroStat label="Overall PnL" value={formatCurrency(netPnl)} positive={netPnl >= 0} />
+          <HeroStat
+            label="Return on $100 seed"
+            value={`${returnPercent >= 0 ? '+' : ''}${returnPercent.toFixed(1)}%`}
+            positive={returnPercent >= 0}
+          />
+        </div>
+
       </div>
     </section>
   )
@@ -315,15 +305,21 @@ export function PolymarketPage() {
           </div>
         </section>
       </div>
+      <footer className="mt-8 border-t border-white/10 py-6 text-center text-xs text-white/60">
+        © <a href="https://presagelabs.com/" target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">Presage Labs</a>, 2025
+        {' '}|{' '}
+        <a href="https://predibench.com/" target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">predibench.com</a>
+      </footer>
     </div>
   )
 }
 
-function StatHighlight({ label, value, positive = true }: { label: string; value: string; positive?: boolean }) {
+function HeroStat({ label, value, positive = true, subLabel }: { label: string; value: string; positive?: boolean; subLabel?: string }) {
   return (
-    <div className="rounded-2xl bg-white/5 px-4 py-3">
-      <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">{label}</p>
-      <p className={cn('text-lg font-semibold', positive ? 'text-emerald-300' : 'text-rose-300')}>{value}</p>
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.45)]">
+      <p className="text-xs uppercase tracking-[0.3em] text-white/60">{label}</p>
+      <p className={cn('text-3xl font-semibold mt-2', positive ? 'text-emerald-300' : 'text-rose-300')}>{value}</p>
+      {subLabel && <p className="text-xs text-white/70 mt-3">{subLabel}</p>}
     </div>
   )
 }
