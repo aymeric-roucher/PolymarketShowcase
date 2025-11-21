@@ -156,9 +156,9 @@ export function PolymarketPage() {
             </h1>
             <p className="text-white/80 text-lg">
               If it keeps beating the market, it means we can predict the future more accurately than the crowd, the experts,
-              and the insider info. Today&apos;s gains stem from an initial $100 bankroll.
+              and the insider info.
             </p>
-            <p className="text-white/80 text-base">See for yourself.</p>
+            <p className="text-white/80 text-base">Today&apos;s gains stem from an initial $100 bankroll. See the results.</p>
             <div className="flex flex-wrap gap-4">
               <a
                 href={portfolioUrl}
